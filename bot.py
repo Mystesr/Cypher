@@ -8,7 +8,15 @@ from database import Database
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-OWNER_ID = int(os.getenv("OWNER_ID"))  # Your Discord user ID - only YOU get /setmoney
+owner_env = os.getenv("OWNER_ID")
+
+if not owner_env:
+    raise ValueError("OWNER_ID missing")
+
+try:
+    OWNER_ID = int(owner_env)
+except:
+    raise ValueError("OWNER_ID must be a number")  # Your Discord user ID - only YOU get /setmoney
 
 intents = discord.Intents.default()
 intents.members = True
