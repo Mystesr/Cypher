@@ -8,7 +8,7 @@ from database import Database
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-OWNER_ID = int(os.getenv("OWNER_ID")) # Your Discord user ID - only YOU get /setmoney
+OWNER_ID = int(os.getenv("OWNER_ID"))  # Your Discord user ID - only YOU get /setmoney
 
 intents = discord.Intents.default()
 intents.members = True
@@ -25,6 +25,7 @@ async def on_ready():
     await bot.load_extension("cogs.economy")
     await bot.load_extension("cogs.gambling")
     await bot.load_extension("cogs.admin")
+    await bot.load_extension("cogs.viet_cards")
     try:
         synced = await bot.tree.sync()
         print(f"✅ Synced {len(synced)} slash commands")
