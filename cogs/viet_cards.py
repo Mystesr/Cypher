@@ -638,7 +638,7 @@ class VietCards(commands.Cog):
         public_msg = await interaction.original_response()
 
         # 2. Gửi ctrl riêng cho người chơi (ephemeral, có nút)
-        view=BaCayView(self.bot, bet, ph, dh, public_msg)
+        view=BaCayCtrl(self.bot, bet, ph, dh, public_msg)
         view.uid=interaction.user.id
         await interaction.followup.send(
             "🎮 **Điều khiển của bạn** — chỉ mình bạn thấy:",
