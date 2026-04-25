@@ -26,6 +26,7 @@ async def on_ready():
     await bot.load_extension("cogs.gambling")
     await bot.load_extension("cogs.admin")
     await bot.load_extension("cogs.viet_cards")
+    await bot.load_extension("cogs.football")
     try:
         synced = await bot.tree.sync()
         print(f"✅ Synced {len(synced)} slash commands")
