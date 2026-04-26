@@ -82,13 +82,23 @@ async def api_get(endpoint: str, params: dict = None):
     headers = {"x-apisports-key": API_KEY}
     async with aiohttp.ClientSession() as s:
         async with s.get(f"{BASE_URL}/{endpoint}", headers=headers, params=params or {}) as r:
-            if r.status != 200:
-                return None
             data = await r.json()
-            return data.get("response", [])
+            # Log errors from API
+            if r.status != 200:
+                print(f"[API ERROR] {endpoint} status={r.status} body={data}")
+                return None
+            errors = data.get("errors", {})
+            if errors:
+                print(f"[API ERRORS] {endpoint} params={params} errors={errors}")
+                return None
+            results = data.get("response", [])
+            print(f"[API OK] {endpoint} params={params} results={len(results)}")
+            return results
 
 async def search_teams(query: str):
-    """Tìm danh sách đội bóng theo tên"""
+    """Tìm danh sách đội bóng theo tên — minimum 3 ký tự"""
+    if len(query) < 3:
+        return []
     return await api_get("teams", {"search": query}) or []
 
 async def search_fixtures(team_id: int):
@@ -750,14 +760,25 @@ class Football(commands.Cog):
             )
 
 
+        # Validate min length
+        if len(team) < 3:
+            return await interaction.followup.send(
+                "❌ Tên đội phải có ít nhất **3 ký tự**!", ephemeral=True)
+
         # Step 1: tìm đội theo tên
         teams_found = await search_teams(team)
+        if teams_found is None:
+            return await interaction.followup.send(
+                "❌ Lỗi kết nối API! Kiểm tra lại `FOOTBALL_API_KEY` trong Railway.",
+                ephemeral=True)
         if not teams_found:
             return await interaction.followup.send(
-                f"❌ Không tìm thấy đội **{team}**!\n"
-                "💡 Thử tên tiếng Anh: *Arsenal, Barcelona, Manchester United...*",
-                ephemeral=True
-            )
+                f"❌ Không tìm thấy đội **{team}**!\n\n"
+                "💡 **Thử tên tiếng Anh đầy đủ:**\n"
+                "`Barcelona` / `Arsenal` / `Manchester United` / `Liverpool`\n"
+                "`Real Madrid` / `Bayern Munich` / `PSG`\n\n"
+                "⚠️ Tên phải giống với tên trong hệ thống API (tiếng Anh)",
+                ephemeral=True)
 
         # Nếu nhiều đội → show select menu
         if len(teams_found) > 1:
