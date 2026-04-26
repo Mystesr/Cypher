@@ -87,17 +87,29 @@ async def api_get(endpoint: str, params: dict = None):
             data = await r.json()
             return data.get("response", [])
 
-async def search_fixtures(query: str):
-    """Tìm trận theo tên đội hoặc giải"""
-    # Search by team name
-    teams = await api_get("teams", {"search": query})
-    if not teams:
-        return []
-    team_id = teams[0]["team"]["id"]
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+async def search_teams(query: str):
+    """Tìm danh sách đội bóng theo tên"""
+    return await api_get("teams", {"search": query}) or []
+
+async def search_fixtures(team_id: int):
+    """
+    Lấy trận tiếp theo của một đội theo team_id.
+    Dùng next=10 để lấy tối đa 10 trận sắp tới.
+    """
     fixtures = await api_get("fixtures", {
-        "team": team_id, "next": 5, "timezone": "Asia/Ho_Chi_Minh"
+        "team": team_id,
+        "next": 10,
+        "timezone": "Asia/Ho_Chi_Minh"
     })
+    if not fixtures:
+        # fallback với season
+        current_season = datetime.now(timezone.utc).year
+        fixtures = await api_get("fixtures", {
+            "team": team_id,
+            "season": current_season,
+            "timezone": "Asia/Ho_Chi_Minh",
+            "status": "NS"
+        })
     return fixtures or []
 
 async def get_fixture(fixture_id: int):
@@ -657,6 +669,66 @@ class ResultModal(discord.ui.Modal, title="Nhập Kết Quả Trận Đấu"):
         await interaction.response.send_message("✅ Đã nhập kết quả và thanh toán kèo!", ephemeral=True)
 
 
+
+# ─── Team select view (when multiple teams found) ────────────
+async def _send_fixtures(interaction, team_id: int, team_name: str):
+    """Fetch and send upcoming fixtures for a team"""
+    fixtures = await search_fixtures(team_id)
+    if not fixtures:
+        await interaction.followup.send(
+            f"❌ **{team_name}** không có trận sắp tới!\n"
+            "(Giải đấu chưa lên lịch hoặc mùa giải chưa bắt đầu)",
+            ephemeral=True
+        )
+        return
+    e = discord.Embed(title=f"⚽  Lịch thi đấu: {team_name}", color=0x3498DB)
+    lines = []
+    for f in fixtures[:8]:
+        fix    = f["fixture"]
+        home   = f["teams"]["home"]["name"]
+        away   = f["teams"]["away"]["name"]
+        league = f["league"]["name"]
+        dt     = datetime.fromisoformat(fix["date"].replace("Z", "+00:00"))
+        time_str = dt.strftime("%d/%m/%Y %H:%M UTC")
+        lines.append(
+            f"🆔 `{fix['id']}` — **{home}** vs **{away}**\n"
+            f"   📅 {time_str}   🏆 {league}"
+        )
+    e.description = "\n\n".join(lines)
+    e.set_footer(text="Dùng /addmatch <fixture_id> để tạo kèo cho trận này")
+    await interaction.followup.send(embed=e, ephemeral=True)
+
+class TeamSelectMenu(discord.ui.Select):
+    def __init__(self, teams, bot):
+        self.bot = bot
+        options = []
+        for t in teams[:25]:
+            tid   = t["team"]["id"]
+            tname = t["team"]["name"]
+            country = t["team"].get("country", "")
+            options.append(discord.SelectOption(
+                label=tname[:100],
+                value=str(tid),
+                description=f"{country} — ID: {tid}"[:100]
+            ))
+        super().__init__(
+            placeholder="Chọn đội bóng...",
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        team_id   = int(self.values[0])
+        team_name = next(
+            o.label for o in self.options if o.value == self.values[0]
+        )
+        await _send_fixtures(interaction, team_id, team_name)
+
+class TeamSelectView(discord.ui.View):
+    def __init__(self, teams, bot):
+        super().__init__(timeout=60)
+        self.add_item(TeamSelectMenu(teams, bot))
+
 # ─── COG ──────────────────────────────────────────────────────
 class Football(commands.Cog):
     def __init__(self, bot):
@@ -677,25 +749,37 @@ class Football(commands.Cog):
                 ephemeral=True
             )
 
-        fixtures = await search_fixtures(team)
-        if not fixtures:
-            return await interaction.followup.send(f"❌ Không tìm thấy trận nào cho **{team}**!", ephemeral=True)
 
-        e = discord.Embed(title=f"⚽  Kết quả tìm kiếm: {team}", color=0x3498DB)
-        lines = []
-        for f in fixtures[:5]:
-            fix  = f["fixture"]
-            home = f["teams"]["home"]["name"]
-            away = f["teams"]["away"]["name"]
-            league = f["league"]["name"]
-            dt = datetime.fromisoformat(fix["date"].replace("Z","+00:00"))
-            dt_vn = dt.astimezone(timezone.utc)
-            time_str = dt_vn.strftime("%d/%m %H:%M")
-            lines.append(f"🆔 `{fix['id']}` — **{home}** vs **{away}**\n   📅 {time_str}  🏆 {league}")
+        # Step 1: tìm đội theo tên
+        teams_found = await search_teams(team)
+        if not teams_found:
+            return await interaction.followup.send(
+                f"❌ Không tìm thấy đội **{team}**!\n"
+                "💡 Thử tên tiếng Anh: *Arsenal, Barcelona, Manchester United...*",
+                ephemeral=True
+            )
 
-        e.description = "\n\n".join(lines)
-        e.set_footer(text="Dùng /addmatch <fixture_id> để tạo kèo cho trận này")
-        await interaction.followup.send(embed=e)
+        # Nếu nhiều đội → show select menu
+        if len(teams_found) > 1:
+            view = TeamSelectView(teams_found[:10], self.bot)
+            e = discord.Embed(
+                title=f"⚽  Tìm thấy {len(teams_found)} đội bóng",
+                description="Chọn đội để xem lịch thi đấu:",
+                color=0x3498DB
+            )
+            for t in teams_found[:5]:
+                e.add_field(
+                    name=t["team"]["name"],
+                    value=f"🌍 {t['team']['country']}  |  🆔 ID: {t['team']['id']}",
+                    inline=False
+                )
+            return await interaction.followup.send(embed=e, view=view, ephemeral=True)
+
+        # 1 đội → lấy trận luôn
+        team_id   = teams_found[0]["team"]["id"]
+        team_name = teams_found[0]["team"]["name"]
+        await _send_fixtures(interaction, team_id, team_name)
+
 
     # ── /addmatch ──────────────────────────────────────────
     @app_commands.command(name="addmatch", description="⚽ Tạo kèo cho một trận đấu")
